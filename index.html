@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <!-- 모바일 전용: 확대/축소 불가 -->
+  <meta name="viewport" content="width=device-width, maximum-scale=1.0, user-scalable=no">
+  <title>Tetris - Touch Optimized</title>
+  <style>
+    /* 불필요한 UI 제거, 전체 화면 사용 */
+    body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #000;
+    }
+    /* 캔버스는 전체 창 크기로 설정 (JS에서 동적 조정) */
+    #gameCanvas {
+      display: block;
+      touch-action: none;
+    }
+    /* 점수와 시간은 필요 시 화면 하단에 배치 (선택사항) */
+    #scoreBoard, #timeBoard {
+      position: absolute;
+      color: white;
+      font-size: 18px;
+      top: 5px;
+      left: 5px;
+      margin: 0;
+      padding: 5px;
+      background: rgba(0,0,0,0.5);
+      z-index: 2;
+    }
+    #timeBoard {
+      top: 35px;
+    }
+    /* 게임 시작 전 오버레이 스타일 */
+    #startScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 10;
+    }
+    #startScreen h1 {
+      font-size: 48px;
+      margin-bottom: 20px;
+    }
+    #startScreen button {
+      font-size: 24px;
+      padding: 10px 20px;
+      cursor: pointer;
+      background-color: #ff6666; 
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+    }
+
+    /* (1) 게임 오버 오버레이 추가 */
+    #gameOverScreen {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.8);
+      color: white;
+      display: none;  /* 처음에는 숨김 */
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      z-index: 20;
+      text-align: center;
+      padding: 20px;
+    }
+    #gameOverScreen p {
+      font-size: 24px;
+      margin: 10px 0;
+    }
+    #gameOverScreen button {
+      font-size: 24px;
+      padding: 10px 20px;
+      cursor: pointer;
+      background-color: #ff66cc; /* 귀여운 느낌 */
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      margin-top: 20px;
+    }
+  </style>
+</head>
+<body>
+  <!-- 캔버스 -->
+  <canvas id="gameCanvas"></canvas>
+  
+  <!-- 점수와 시간 (원하는 경우 표시) -->
+  <div id="scoreBoard">Score: 0</div>
+  <div id="timeBoard">Time: 0:00</div>
+  
+  <!-- 게임 시작 전 오버레이 -->
+  <div id="startScreen">
+    <h1>코켓배송 - 테트리스</h1>
+    <p>유튜브 '걸코_Gulko' 저작권 콘텐츠입니다.<br>
+    <p>© 2025 코켓게임즈. All rights reserved.<br>
+      <a href="https://www.youtube.com/@Gulko" target="_blank">https://www.youtube.com/@Gulko</a></p>
+    <button id="startButton">게임시작</button>
+  </div>
+
+  <!-- (1) 게임 오버 오버레이 추가 -->
+  <div id="gameOverScreen">
+    <p>게임 오버! 😢</p>
+    <p>코팡 구입은 걸코와 함께<br>
+       <a href="https://www.youtube.com/@Gulko" target="_blank">https://www.youtube.com/@Gulko</a><br>
+       사랑합니다. 고객님.</p>
+    <button id="restartButton">다시 시작하기</button>
+  </div>
+
+  <!-- 오디오 파일들 (사용 파일에 맞게 수정) -->
+  <audio id="blockDropSound" src="drop_sound.mp3"></audio>
+  <audio id="lineClearSound" src="clear_sound.mp3"></audio>
+  <audio id="blockBottomSound" src="block_bottom.mp3"></audio>
+  <audio id="levelUpSound" src="levelup_sound.mp3"></audio>
+  <audio id="bgMusic" src="bg_music.mp3" loop></audio>
+  
+  <script>
+    // DOM 요소들
+    const canvas = document.getElementById('gameCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreBoard = document.getElementById('scoreBoard');
+    const timeBoard = document.getElementById('timeBoard');
+    const blockDropSound = document.getElementById('blockDropSound');
+    const lineClearSound = document.getElementById('lineClearSound');
+    const blockBottomSound = document.getElementById('blockBottomSound');
+    const levelUpSound = document.getElementById('levelUpSound');
+    const bgMusic = document.getElementById('bgMusic');
+    const startScreen = document.getElementById('startScreen');
+    const startButton = document.getElementById('startButton');
+    
+    // (1) 게임 오버 오버레이 DOM
+    const gameOverScreen = document.getElementById('gameOverScreen');
+    const restartButton = document.getElementById('restartButton');
+
+    // 배경 이미지 (파일명/경로 수정)
+    const backgroundImg = new Image();
+    backgroundImg.src = 'background.jpg';
+    
+    // 게임 보드 설정
+    const ROWS = 20, COLS = 10;
+    let BLOCK_SIZE; // 캔버스 크기에 따라 동적 계산
+    let offsetX = 0, offsetY = 0;  // 보드를 캔버스 중앙에 표시하기 위한 오프셋
+    let board = [];
+    function initBoard() {
+      board = [];
+      for (let r = 0; r < ROWS; r++) {
+        board[r] = new Array(COLS).fill(0);
+      }
+    }
+    
+    // 테트로미노 타입 및 이미지
+    const blockTypes = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
+    const blockImages = {};
+    blockTypes.forEach(type => {
+      const img = new Image();
+      img.src = type.toLowerCase() + '_block.png';
+      blockImages[type] = img;
+    });
+    
+    // 테트로미노 모양 정의
+    const shapes = {
+      'I': [[1,1,1,1]],
+      'O': [[1,1],[1,1]],
+      'T': [[0,1,0],[1,1,1]],
+      'S': [[0,1,1],[1,1,0]],
+      'Z': [[1,1,0],[0,1,1]],
+      'J': [[1,0,0],[1,1,1]],
+      'L': [[0,0,1],[1,1,1]]
+    };
+    
+    // 'Bag' 알고리즘 (동일 블록 연속 방지)
+    let blockBag = [];
+    function refillBag() {
+      blockBag = [...blockTypes];
+      for (let i = blockBag.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [blockBag[i], blockBag[j]] = [blockBag[j], blockBag[i]];
+      }
+    }
+    
+    // 현재 떨어지는 블록 정보
+    let currentBlock = { type: null, shape: null, x: 0, y: 0 };
+    function spawnBlock() {
+      if (blockBag.length === 0) {
+        refillBag();
+      }
+      currentBlock.type = blockBag.pop();
+      currentBlock.shape = shapes[currentBlock.type] || [[1]];
+      currentBlock.x = Math.floor((COLS - currentBlock.shape[0].length) / 2);
+      currentBlock.y = 0;
+      if (collision(currentBlock.x, currentBlock.y, currentBlock.shape)) {
+        gameOver();
+      }
+    }
+    
+    // 충돌 검사: 보드 경계와 고정 블록과의 충돌 확인
+    function collision(newX, newY, newShape) {
+      for (let r = 0; r < newShape.length; r++) {
+        for (let c = 0; c < newShape[r].length; c++) {
+          if (newShape[r][c]) {
+            const boardX = newX + c;
+            const boardY = newY + r;
+            if (boardX < 0 || boardX >= COLS || boardY >= ROWS) return true;
+            if (boardY >= 0 && board[boardY][boardX]) return true;
+          }
+        }
+      }
+      return false;
+    }
+    
+    // 블록을 보드에 고정 및 줄 삭제
+    function fixBlock() {
+      const shape = currentBlock.shape;
+      for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[r].length; c++) {
+          if (shape[r][c]) {
+            const boardX = currentBlock.x + c;
+            const boardY = currentBlock.y + r;
+            if (boardY >= 0 && boardY < ROWS && boardX >= 0 && boardX < COLS) {
+              board[boardY][boardX] = currentBlock.type;
+            }
+          }
+        }
+      }
+      checkLineClear();
+    }
+    
+    // 줄 삭제 및 점수 업데이트
+    let score = 0;
+    function checkLineClear() {
+      let linesCleared = 0;
+      for (let r = 0; r < ROWS; r++) {
+        if (board[r].every(cell => cell !== 0)) {
+          board.splice(r, 1);
+          board.unshift(new Array(COLS).fill(0));
+          score += 100;
+          linesCleared++;
+        }
+      }
+      if (linesCleared > 0) {
+        lineClearSound.play().catch(() => {});
+      }
+    }
+    
+    // 블록 한 칸 아래 이동
+    function moveBlockDown() {
+      if (!collision(currentBlock.x, currentBlock.y + 1, currentBlock.shape)) {
+        currentBlock.y++;
+        blockDropSound.play().catch(() => {});
+      } else {
+        blockBottomSound.play().catch(() => {});
+        fixBlock();
+        spawnBlock();
+      }
+    }
+    
+    // 단일 탭: 회전 (회전 후 충돌이 없다면)
+    function rotateBlock() {
+      const rotated = rotateMatrix(currentBlock.shape);
+      if (!collision(currentBlock.x, currentBlock.y, rotated)) {
+        currentBlock.shape = rotated;
+      }
+    }
+    
+    // 행렬 회전 (시계방향)
+    function rotateMatrix(matrix) {
+      const result = [];
+      for (let c = 0; c < matrix[0].length; c++) {
+        const newRow = [];
+        for (let r = matrix.length - 1; r >= 0; r--) {
+          newRow.push(matrix[r][c]);
+        }
+        result.push(newRow);
+      }
+      return result;
+    }
+    
+    // 보드 및 현재 블록 그리기 (배경 이미지 포함, 중앙 정렬)
+    function drawBoard() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.drawImage(backgroundImg, 0, 0, canvas.width, canvas.height);
+      for (let r = 0; r < ROWS; r++) {
+        for (let c = 0; c < COLS; c++) {
+          if (board[r][c]) {
+            const x = offsetX + c * BLOCK_SIZE;
+            const y = offsetY + r * BLOCK_SIZE;
+            ctx.drawImage(blockImages[board[r][c]], x, y, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(x, y, BLOCK_SIZE, BLOCK_SIZE);
+          }
+        }
+      }
+    }
+    
+    function drawCurrentBlock() {
+      const shape = currentBlock.shape;
+      for (let r = 0; r < shape.length; r++) {
+        for (let c = 0; c < shape[r].length; c++) {
+          if (shape[r][c]) {
+            const x = offsetX + (currentBlock.x + c) * BLOCK_SIZE;
+            const y = offsetY + (currentBlock.y + r) * BLOCK_SIZE;
+            ctx.drawImage(blockImages[currentBlock.type], x, y, BLOCK_SIZE, BLOCK_SIZE);
+            ctx.strokeStyle = "#fff";
+            ctx.strokeRect(x, y, BLOCK_SIZE, BLOCK_SIZE);
+          }
+        }
+      }
+    }
+    
+    function draw() {
+      drawBoard();
+      drawCurrentBlock();
+    }
+    
+    // 메인 게임 루프
+    function gameLoop() {
+      moveBlockDown();
+      updateDifficulty();
+      updateScoreAndTime();
+      draw();
+    }
+    
+    // 난이도 조절: 30초마다 레벨 증가, 속도 200ms씩 빨라짐
+    let gameSpeed = 1000;
+    let levelTimer = Date.now();
+    let level = 1;
+    let startTime;
+    let gameInterval;
+    function updateDifficulty() {
+      const elapsed = Date.now() - levelTimer;
+      if (elapsed >= 30000) {
+        gameSpeed = Math.max(200, gameSpeed - 200);
+        level++;
+        // 레벨업 효과(sound 등 추가 가능)
+        clearInterval(gameInterval);
+        gameInterval = setInterval(gameLoop, gameSpeed);
+        levelTimer = Date.now();
+      }
+    }
+    
+    // 점수 및 시간 업데이트
+    function updateScoreAndTime() {
+      scoreBoard.textContent = "Score: " + score;
+      const totalSeconds = Math.floor((Date.now() - startTime) / 1000);
+      const minutes = Math.floor(totalSeconds / 60);
+      const seconds = totalSeconds % 60;
+      timeBoard.textContent = "Time: " + minutes + ":" + (seconds < 10 ? "0" : "") + seconds;
+    }
+    
+    // 캔버스 크기를 전체 화면에 맞게 조정, BLOCK_SIZE 및 보드 오프셋 계산
+    function updateCanvasSize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // 가로와 세로 크기 모두 고려하여 BLOCK_SIZE 결정
+      BLOCK_SIZE = Math.min(canvas.width / COLS, canvas.height / ROWS);
+      offsetX = (canvas.width - BLOCK_SIZE * COLS) / 2;
+      offsetY = (canvas.height - BLOCK_SIZE * ROWS) / 2;
+    }
+    
+    // (2) gameOver() 함수 수정
+    function gameOver() {
+      clearInterval(gameInterval);
+      // 게임 오버 화면을 표시하고, 배경음악 중단
+      bgMusic.pause();
+      gameOverScreen.style.display = 'flex'; 
+    }
+    
+    // 터치 이벤트 처리: 터치 시작, 이동, 종료를 통해 블록 조작
+    let touchStartX = 0, touchStartY = 0;
+    let accumulatedDeltaX = 0, accumulatedDeltaY = 0;
+    let swipeThreshold = 20;
+    
+    canvas.addEventListener('touchstart', e => {
+      const touch = e.touches[0];
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      accumulatedDeltaX = 0;
+      accumulatedDeltaY = 0;
+      e.preventDefault();
+    });
+    
+    canvas.addEventListener('touchmove', e => {
+      const touch = e.touches[0];
+      const deltaX = touch.clientX - touchStartX;
+      const deltaY = touch.clientY - touchStartY;
+      accumulatedDeltaX += deltaX;
+      accumulatedDeltaY += deltaY;
+      
+      // 수평 이동 처리: 임계값을 초과할 경우 한 칸씩 이동
+      while (Math.abs(accumulatedDeltaX) >= swipeThreshold) {
+        if (accumulatedDeltaX > 0) {
+          if (!collision(currentBlock.x + 1, currentBlock.y, currentBlock.shape))
+            currentBlock.x++;
+          accumulatedDeltaX -= swipeThreshold;
+        } else {
+          if (!collision(currentBlock.x - 1, currentBlock.y, currentBlock.shape))
+            currentBlock.x--;
+          accumulatedDeltaX += swipeThreshold;
+        }
+      }
+      
+      // 수직 이동 처리: 아래 방향으로 이동 시 한 칸 이동 (위쪽은 무시)
+      while (Math.abs(accumulatedDeltaY) >= swipeThreshold) {
+        if (accumulatedDeltaY > 0) {
+          moveBlockDown();
+          accumulatedDeltaY -= swipeThreshold;
+        } else {
+          accumulatedDeltaY += swipeThreshold;
+        }
+      }
+      
+      touchStartX = touch.clientX;
+      touchStartY = touch.clientY;
+      
+      draw();
+      e.preventDefault();
+    });
+    
+    canvas.addEventListener('touchend', e => {
+      let touchEndX = e.changedTouches[0].clientX;
+      let touchEndY = e.changedTouches[0].clientY;
+      const deltaX = touchEndX - touchStartX;
+      const deltaY = touchEndY - touchStartY;
+      
+      if (Math.abs(deltaX) < swipeThreshold && Math.abs(deltaY) < swipeThreshold) {
+        rotateBlock();
+      }
+      draw();
+      e.preventDefault();
+    });
+    
+    // 창 크기 변화 감지 시 캔버스 및 오프셋 업데이트
+    window.addEventListener('resize', () => {
+      updateCanvasSize();
+      draw();
+    });
+    updateCanvasSize();
+    
+    // 게임 시작 플래그
+    let gameStarted = false;
+    
+    // 게임 초기화 및 시작 함수
+    function startGame() {
+      updateCanvasSize();
+      initBoard();
+      refillBag();
+      spawnBlock();
+      score = 0;
+      level = 1;
+      gameSpeed = 1000;
+      levelTimer = Date.now();
+      startTime = Date.now();
+      gameInterval = setInterval(gameLoop, gameSpeed);
+      bgMusic.volume = 0.3;
+      bgMusic.play().catch(() => {});
+      gameStarted = true;
+    }
+    
+    // 시작 버튼 클릭 이벤트: 오버레이 숨기고 게임 시작
+    startButton.addEventListener('click', () => {
+      startScreen.style.display = 'none';
+      startGame();
+    });
+
+    // (3) 재시작 버튼 이벤트 리스너 추가
+    restartButton.addEventListener('click', () => {
+      // 게임 오버 오버레이 숨기기
+      gameOverScreen.style.display = 'none';
+
+      // 기존 게임 상태를 초기화 후 다시 시작
+      startGame();
+    });
+  </script>
+</body>
+</html>
